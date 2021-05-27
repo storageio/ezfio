@@ -1,0 +1,88 @@
+ezFIO V1.0
+(C) Copyright 2015-18 HGST
+earle.philhower.iii@hgst.com
+
+------------------------------------------------------------------------
+ezFIO is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 2 of the License, or
+(at your option) any later version.
+
+ezFIO is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with ezFIO.  If not, see <https://www.gnu.org/licenses/>.
+------------------------------------------------------------------------
+
+This test script is intended to give a block-level based overview of
+SSD performance (SATA, SAS, and NVME) under real-world conditions by
+focusing on sustained performance at different block sizes and queue
+depths.  Both text-mode Linux and GUI and text-mode Windows versions
+are included.
+
+The results of multiple tests are summarized into a single OpenDoc format
+spreadsheet, readable under OpenOffice, LibreOffice, or Microsoft Excel.
+
+FIO is required to perform the actual IO tests.  Please ensure the latest
+version is installed, either from your operating system's repository or
+sources available at https://github.com/axboe/fio or precompiled for
+Windows at https://ci.appveyor.com/project/axboe/fio (for the GIT latest)
+or from https://www.bluestop.org/fio/ .
+
+(There seems to be an issue with FIO 3.1 under Windows that is not present
+under earlier or later builds.  In a nutshell, the 1200 second sustained
+performance test ends up running, under this version, for over 12 hours!
+While the final results are still good and the script continues, it does
+waste a large amount of time and so I recommend avoiding the BlueStop 3.1
+build.  The CI.appveyor.com link above can be used to get current FIO
+head builds instead.)
+
+
+------------------------------------------------------------------------
+
+A new --cluster option allows for running multiple clients in parallel,
+to allow testing performance of shared storage systems like SANs or
+AFAs.
+
+Start a "fio --server" job on all clients, then on one of them run
+./ezfio.py --cluster --drive host1:/dev/dr1,host2:/dev/dr2/... ...
+
+Basically add "--cluster" to the command line before the drive
+option, and in the drive option make a comma separated list of
+hostname:/path/to/storage .
+
+The first host in the list must be the one you're currently running
+ezfio from.  ezfio will try using the local system to collect
+appropriate system info on the first drive.
+
+In the current implementation, all nodes/drives must be identical in
+size.  There are no provisions for having volumes of differing sizes.
+
+All other graphs and results should be the aggregate of the entire
+cluster, as reported by fio.
+
+ex:
+
+Start up FIO servers on all systems to be tested
+(on host 1):
+  # fio --server &
+(on host 2):
+  # fio --server &
+(on host 3):
+  # fio --server &
+
+Run a benchmark run:
+(on host 1)
+  # ./ezfio.py --cluster --drive host1:/dev/nvme1n1,host2:/dev/nvme1n1,host3:/dev/nvme4n1
+
+------------------------------------------------------------------------
+
+ezFIO got where it is today through the help of many users who filed
+bugs when things didn't work, or submitted patches to support new CPUs.
+Please feel free to open issues or drop me a line if you have questions.
+
+Special thanks to @coolrecep (Recep Baltaş) who has spent literally days
+tracking down Windows issues.
