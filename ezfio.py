@@ -46,6 +46,42 @@ import tempfile
 import threading
 import time
 import zipfile
+import yaml
+
+def GetDefaultConfig():
+    default_config = {}
+    default_config['global'] = {}
+    default_config['global']['shorttime'] = 120
+    default_config['global']['longtime'] = 1200
+    default_config['global']['block_size_list'] = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
+    default_config['global']['queue_depth_list'] = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    default_config['global']['threads_list'] = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    return default_config
+
+
+def CheckTestConfig():
+    global test_config, test_config_file
+    if test_config_file and not test_config_file.isspace():
+        #read file
+        print('Checking test config file %s ... ' % test_config_file, end='')
+
+        with open(test_config_file, 'r') as file_content:
+            test_config = yaml.full_load(file_content)
+            default_config = GetDefaultConfig()
+
+            if not test_config['tests'] or len(test_config['tests']) == 0:
+                print('Failed')
+                print("tests is not configured")
+                sys.exit(1)
+
+            if not test_config['global']:
+                test_config['global'] = default_config['global']
+            else:
+                for item_key in default_config['global'].keys():
+                    if not test_config['global'][item_key]:
+                        test_config['global'][item_key] = default_config['global'][item_key]
+
+        print('Passed')
 
 
 def AppendFile(text, filename):
@@ -149,7 +185,7 @@ def ParseArgs():
     """Parse command line options into globals."""
     global physDrive, physDriveDict, physDriveTxt, utilization, nullio, isFile
     global outputDest, offset, cluster, yes, quickie, verify, fastPrecond
-    global readOnly
+    global readOnly, test_config_file
 
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -163,6 +199,8 @@ Requirements:\n
 * sdparm to identify the NVME device and serial number
 
 WARNING: All data on the target device will be DESTROYED by this test.""")
+    parser.add_argument("--test-config", dest="test_config",
+                        help="Test cases config file.", required=False)
     parser.add_argument("--cluster", dest="cluster", action='store_true',
                         help="Run the test on a cluster (--drive in "+
                         "host1:/dev/p1,host2:/dev/ps,...)", required=False)
@@ -195,6 +233,7 @@ WARNING: All data on the target device will be DESTROYED by this test.""")
                         action='store_true', required=False)
     args = parser.parse_args()
 
+    test_config_file = args.test_config
     physDrive = args.physDrive
     physDriveTxt = physDrive
     utilization = args.utilization
@@ -398,7 +437,7 @@ def SetupFiles():
     suffix += socket.gethostname() + "_" + ds
 
     if not outputDest:
-        outputDest = os.getcwd()
+        outputDest = os.getcwd() + '/test_result'
     # The "details" directory contains the raw output of each FIO run
     details = outputDest + "/details_" + suffix
     if os.path.exists(details):
@@ -925,7 +964,78 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
     return iops, mbps, lat
 
 
-def DefineTests():
+def AddTest(name, seqrand, writepct, blocksize, threads, qdperthread,
+                iops_log, runtime, desc, cmdline):
+    """Bare usage add a test to the list to execute"""
+    global oc
+
+    if threads != "":
+        qd = int(threads) * int(qdperthread)
+    else:
+        qd = 0
+    dat = {}
+    dat['name'] = name
+    dat['seqrand'] = seqrand
+    dat['wmix'] = writepct
+    dat['bs'] = blocksize
+    dat['qd'] = qd
+    dat['qdperthread'] = qdperthread
+    dat['threads'] = threads
+    dat['bw'] = ''
+    dat['iops'] = ''
+    dat['lat'] = ''
+    dat['desc'] = desc
+    dat['iops_log'] = iops_log
+    dat['runtime'] = runtime
+    dat['cmdline'] = cmdline
+    oc.append(dat)
+
+
+def DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+              iops_log, runtime):
+    """Add an individual run to the list of tests to execute"""
+    AddTest(testname, seqrand, wmix, bs, threads, iodepth, iops_log,
+            runtime, desc, lambda o: {RunTest(o['iops_log'],
+                                              o['seqrand'], o['wmix'],
+                                              o['bs'], o['threads'],
+                                              o['qdperthread'],
+                                              o['runtime'])})
+
+
+def AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth,
+                  iops_log, runtime):
+    """Add a sequence of tests varying the block size"""
+    AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+            lambda o: {AppendFile(o['name'], testcsv)})
+    for bs in bslist:
+        desc = testname + ", BS=" + str(bs)
+        DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                  iops_log, runtime)
+
+
+def AddTestQDShmoo(testname, qdlist, seqrand, wmix, bs, threads, 
+                    iops_log, runtime):
+    """Add a sequence of tests varying the queue depth"""
+    AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+            lambda o: {AppendFile(o['name'], testcsv)})
+    for iodepth in qdlist:
+        desc = testname + ", QD=" + str(iodepth)
+        DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                  iops_log, runtime)
+
+
+def AddTestThreadsShmoo(testname, threadslist, seqrand, wmix, bs, iodepth,
+                  iops_log, runtime):
+    """Add a sequence of tests varying the number of threads"""
+    AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+            lambda o: {AppendFile(o['name'], testcsv)})
+    for threads in threadslist:
+        desc = testname + ", Threads=" + str(threads)
+        DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                  iops_log, runtime)
+
+
+def DefineDefaultTests():
     """Generate the work list for the main worker into OC."""
     global oc, quickie, fastPrecond
     # What we're shmoo-ing across
@@ -938,67 +1048,6 @@ def DefineTests():
     if quickie:
         shorttime = int(shorttime / 10)
         longtime = int(longtime / 10)
-
-    def AddTest(name, seqrand, writepct, blocksize, threads, qdperthread,
-                iops_log, runtime, desc, cmdline):
-        """Bare usage add a test to the list to execute"""
-        if threads != "":
-            qd = int(threads) * int(qdperthread)
-        else:
-            qd = 0
-        dat = {}
-        dat['name'] = name
-        dat['seqrand'] = seqrand
-        dat['wmix'] = writepct
-        dat['bs'] = blocksize
-        dat['qd'] = qd
-        dat['qdperthread'] = qdperthread
-        dat['threads'] = threads
-        dat['bw'] = ''
-        dat['iops'] = ''
-        dat['lat'] = ''
-        dat['desc'] = desc
-        dat['iops_log'] = iops_log
-        dat['runtime'] = runtime
-        dat['cmdline'] = cmdline
-        oc.append(dat)
-
-    def DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
-                  iops_log, runtime):
-        """Add an individual run to the list of tests to execute"""
-        AddTest(testname, seqrand, wmix, bs, threads, iodepth, iops_log,
-                runtime, desc, lambda o: {RunTest(o['iops_log'],
-                                                  o['seqrand'], o['wmix'],
-                                                  o['bs'], o['threads'],
-                                                  o['qdperthread'],
-                                                  o['runtime'])})
-
-    def AddTestBSShmoo():
-        """Add a sequence of tests varying the block size"""
-        AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
-                lambda o: {AppendFile(o['name'], testcsv)})
-        for bs in bslist:
-            desc = testname + ", BS=" + str(bs)
-            DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
-                      iops_log, runtime)
-
-    def AddTestQDShmoo():
-        """Add a sequence of tests varying the queue depth"""
-        AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
-                lambda o: {AppendFile(o['name'], testcsv)})
-        for iodepth in qdlist:
-            desc = testname + ", QD=" + str(iodepth)
-            DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
-                      iops_log, runtime)
-
-    def AddTestThreadsShmoo():
-        """Add a sequence of tests varying the number of threads"""
-        AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
-                lambda o: {AppendFile(o['name'], testcsv)})
-        for threads in threadslist:
-            desc = testname + ", Threads=" + str(threads)
-            DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
-                      iops_log, runtime)
 
     AddTest('Sequential Preconditioning', 'Preparation', '', '', '', '', '',
             '', '', lambda o: {})  # Only for display on-screen
@@ -1017,7 +1066,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 256
-    AddTestBSShmoo()
+    AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth, iops_log, runtime)
 
     testname = "Sustained Multi-Threaded Random Read Tests by Block Size"
     seqrand = "Rand"
@@ -1026,7 +1075,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 16
-    AddTestBSShmoo()
+    AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth, iops_log, runtime)
 
     testname = "Sequential Write Tests with Queue Depth=1 by Block Size"
     seqrand = "Seq"
@@ -1035,7 +1084,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 1
-    AddTestBSShmoo()
+    AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth, iops_log, runtime)
 
     if not fastPrecond:
         AddTest('Random Preconditioning', 'Preparation', '', '', '', '', '', '',
@@ -1054,7 +1103,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 1
-    AddTestThreadsShmoo()
+    AddTestThreadsShmoo(testname, threadslist, seqrand, wmix, bs, iodepth, iops_log, runtime)
 
     testname = "Sustained 4KB Random mixed 30% Write Tests by Threads"
     seqrand = "Rand"
@@ -1063,7 +1112,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 1
-    AddTestThreadsShmoo()
+    AddTestThreadsShmoo(testname, threadslist, seqrand, wmix, bs, iodepth, iops_log, runtime)
 
     testname = "Sustained Perf Stability Test - 4KB Random 30% Write"
     AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
@@ -1085,7 +1134,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 1
-    AddTestThreadsShmoo()
+    AddTestThreadsShmoo(testname, threadslist, seqrand, wmix, bs, iodepth, iops_log, runtime)
 
     testname = "Sustained Multi-Threaded Random Write Tests by Block Size"
     seqrand = "Rand"
@@ -1094,7 +1143,111 @@ def DefineTests():
     iops_log = False
     iodepth = 16
     threads = 16
-    AddTestBSShmoo()
+    AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth, iops_log, runtime)
+
+
+def DefineConfiguredTests():
+    """Generate the work list for the main worker into OC."""
+    global oc, quickie, fastPrecond
+    # What we're shmoo-ing across
+    bslist = test_config['global']['block_size_list']
+    qdlist = test_config['global']['queue_depth_list']
+    threadslist = test_config['global']['threads_list']
+    queue_x_thread_list = test_config['global']['queue_x_thread_list']
+
+    shorttime = test_config['global']['shorttime']  # Runtime of point tests
+    longtime = test_config['global']['longtime']  # Runtime of long-running tests
+    if quickie:
+        shorttime = int(shorttime / 10)
+        longtime = int(longtime / 10)
+
+
+    for test in test_config.get('tests'):
+        testname = test.get('test')
+        desc = test.get('desc', '')
+        seqrand = test.get('rand')
+        wmix = test.get('writepct')
+        bs = test.get('blocksize')
+        threads = test.get('threads', '')
+        if test.get('runtime') and test.get('runtime') == 'shorttime':
+            runtime = shorttime
+        elif test.get('runtime') and test.get('runtime') == 'longtime':
+            runtime = longtime
+        else:
+            runtime = None
+
+        iops_log = test.get('iops_log')
+        iodepth = test.get('queue_depth')
+        cmd_line = test.get('cmd_line')
+        cmd_lambda = None
+
+        if cmd_line:
+            if cmd_line == 'SequentialConditioning':
+                cmd_lambda = lambda o: {SequentialConditioning()}
+            elif cmd_line == 'RandomConditioning':
+                cmd_lambda = lambda o: {RandomConditioning()}
+            elif cmd_line == 'AppendFile':
+                cmd_lambda = lambda o: {AppendFile(o['name'], testcsv)}
+            elif cmd_line == 'RunTest':
+                cmd_lambda = lambda o: {RunTest(o['iops_log'],
+                                              o['seqrand'], o['wmix'],
+                                              o['bs'], o['threads'],
+                                              o['qdperthread'],
+                                              o['runtime'])}
+            else:
+                print('test %s cmd_line %s is not supported.' % testname, cmd_line)
+        else:
+            cmd_lambda = lambda o: {}
+
+        if not wmix:
+            AddTest(testname, seqrand, '', '', '', '', '',
+                '', '', cmd_lambda)
+
+        if threads == 'threads_list':
+            AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+                lambda o: {AppendFile(o['name'], testcsv)})
+            for threads in threadslist:
+                desc = testname + ", Threads=" + str(threads)
+                DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                        iops_log, runtime)
+        elif threads == 'queue_x_thread_list':
+            AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+                lambda o: {AppendFile(o['name'], testcsv)})
+            for (queuedepth, threads) in queue_x_thread_list:
+                desc = "%s, QueueDepth=%d Threads=%d" % (testname, queuedepth, threads)
+                DoAddTest(testname, seqrand, wmix, bs, threads, queuedepth, desc,
+                        iops_log, runtime)
+        elif bs == 'block_size_list':
+            AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+                lambda o: {AppendFile(o['name'], testcsv)})
+            for bs in bslist:
+                desc = testname + ", BS=" + str(bs)
+                DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                  iops_log, runtime)
+        elif iodepth == 'queue_depth_list':
+            AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+                lambda o: {AppendFile(o['name'], testcsv)})
+            for queue_depth in qdlist:
+                desc = testname + ", QueueDepth=" + str(queue_depth)
+                DoAddTest(testname, seqrand, wmix, bs, threads, queue_depth, desc,
+                  iops_log, runtime)
+        else:
+            if test.get('condition'):
+                if not eval(test.get('condition')):
+                    print("Test is skipped as conditon [%s] is not true" % test.get('condition'))
+                    continue
+
+            AddTest(testname, seqrand, wmix, bs, threads,
+                iodepth, iops_log, runtime, desc, cmd_lambda)
+
+
+def DefineTests():
+    global test_config
+
+    if not test_config:
+        DefineDefaultTests()
+    else:
+        DefineConfiguredTests()
 
 
 def RunAllTests():
@@ -1394,6 +1547,8 @@ AAAAAAAAAAAAAAAAAAAAAG1pbWV0eXBlUEsFBgAAAAABAAEANgAAAFQAAAAAAA==
 fio = ""          # FIO executable
 fioVerString = ""  # FIO self-reported version
 fioOutputFormat = "json"  # Can we make exceedance charts using JSON+ output?
+test_config_file = ""
+test_config = None
 cluster = False   # Running multiple jobs in a cluster using fio --server
 physDrive = ""    # Device path to test
 physDriveTxt = ""  # Unadulterated drive line
@@ -1434,16 +1589,14 @@ odssrc = ""  # Original ODS spreadsheet file
 odsdest = ""  # Generated results ODS spreadsheet file
 
 oc = []  # The list of tests to run
-aioNeeded = 4096  # Minimum AIO kernel setting to run all tests
-
-# These globals are used to return the output results of the test thread
-# Required because it's difficult to pass back values from a threading.().
+aioNeeded = 4096  # Minimum AIO kernel setting to run all teststests_config().
 ret_iops = 0  # Last test IOPS
 ret_mbps = 0  # Last test MBPs
 ret_lat = 0  # Last test in microseconds
 
 if __name__ == "__main__":
     ParseArgs()
+    CheckTestConfig()
     CheckAdmin()
     fio = FindFIO()
     CheckFIOVersion()
