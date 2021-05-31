@@ -59,7 +59,6 @@ global:
     - (16, 32)
     - (32, 16)
     - (32, 32)
-    - (64, 32)
 tests:
   - test: Sequential Preconditioning
     rand: Preparation
@@ -67,9 +66,9 @@ tests:
     desc: Sequential Preconditioning Pass 1
     rand: Seq Pass 1
     writepct: 100
-    blocksize: 131072
-    threads: 1
-    queue_depth: 256
+    blocksize: 1048576
+    threads: 4
+    queue_depth: 16
     iops_log: false
     cmd_line: SequentialConditioning
   - test: Sequential Preconditioning
@@ -77,37 +76,29 @@ tests:
     condition: not fastPrecond
     rand: Seq Pass 2
     writepct: 100
-    blocksize: 131072
-    threads: 1
-    queue_depth: 256
-    iops_log: false
-    cmd_line: SequentialConditioning
-  # sequential tests
-  - test: Sustained Multi-Threaded Sequential Read Tests by Block Size
-    rand: Seq
-    writepct: 0
-    blocksize: block_size_list
-    threads: 1
-    runtime: shorttime
-    queue_depth: 256
-    iops_log: false
-  - test: Sustained Multi-Threaded Random Read Tests by Block Size
-    rand: Rand
-    writepct: 0
-    blocksize: block_size_list
-    threads: 16
-    runtime: shorttime
+    blocksize: 1048576
+    threads: 4
     queue_depth: 16
     iops_log: false
-  - test: Sequential Write Tests with Queue Depth=1 by Block Size
+    cmd_line: SequentialConditioning
+  # sequential tests 1M
+  - test: Sustained Multi-Threaded Sequential 1M Read Tests
+    rand: Seq
+    writepct: 0
+    blocksize: 1048576
+    threads: queue_x_thread_list
+    runtime: shorttime
+    queue_depth: queue_x_thread_list
+    iops_log: false
+  - test: Sustained Multi-Threaded Sequential 1M Write Tests
     rand: Seq
     writepct: 100
-    blocksize: block_size_list
-    threads: 1
+    blocksize: 1048576
+    threads: queue_x_thread_list
     runtime: shorttime
-    queue_depth: 1
+    queue_depth: queue_x_thread_list
     iops_log: false
-  # random tests
+  # random tests 4K
   - test: Random Preconditioning
     condition: not fastPrecond
     rand: Preparation
@@ -117,8 +108,8 @@ tests:
     rand: Rand Pass 1
     writepct: 100
     blocksize: 4096
-    threads: 1
-    queue_depth: 256
+    threads: 8
+    queue_depth: 16
     iops_log: false
     cmd_line: RandomConditioning
   - test: Random Preconditioning
@@ -127,25 +118,33 @@ tests:
     rand: Rand Pass 2
     writepct: 100
     blocksize: 4096
-    threads: 1
-    queue_depth: 256
+    threads: 8
+    queue_depth: 16
     iops_log: false
     cmd_line: RandomConditioning
-  - test: Sustained 4KB Random Read Tests by Number of Threads
+  - test: Sustained Multi-Threaded Random 4K Read Tests
     rand: Rand
     writepct: 0
     blocksize: 4096
-    threads: threads_list
+    threads: queue_x_thread_list
     runtime: shorttime
-    queue_depth: 1
+    queue_depth: queue_x_thread_list
+    iops_log: false
+  - test: Sustained Multi-Threaded Random 4K Write Tests
+    rand: Rand
+    writepct: 100
+    blocksize: 4096
+    threads: queue_x_thread_list
+    runtime: shorttime
+    queue_depth: queue_x_thread_list
     iops_log: false
   - test: Sustained 4KB Random mixed 30% Write Tests by Threads
     rand: Rand
     writepct: 30
     blocksize: 4096
-    threads: threads_list
+    threads: queue_x_thread_list
     runtime: shorttime
-    queue_depth: 1
+    queue_depth: queue_x_thread_list
     iops_log: false
   - test: Sustained Perf Stability Test - 4KB Random 30% Write
     rand: Preparation
@@ -154,24 +153,8 @@ tests:
     rand: Rand
     writepct: 30
     blocksize: 4096
-    threads: 256
+    threads: 8
     runtime: longtime
-    queue_depth: 1
+    queue_depth: 16
     iops_log: true
     cmd_line: RunTest
-  - test: Sustained 4KB Random Write Tests by Number of Threads
-    rand: Rand
-    writepct: 100
-    blocksize: 4096
-    threads: threads_list
-    runtime: shorttime
-    queue_depth: 1
-    iops_log: false
-  - test: Sustained 4KB Random Write Tests by Number of Threads
-    rand: Rand
-    writepct: 100
-    blocksize: block_size_list
-    threads: 16
-    runtime: shorttime
-    queue_depth: 16
-    iops_log: false

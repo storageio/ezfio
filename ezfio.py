@@ -1196,6 +1196,7 @@ def DefineConfiguredTests():
                                               o['runtime'])}
             else:
                 print('test %s cmd_line %s is not supported.' % testname, cmd_line)
+                sys.exit(1)
         else:
             cmd_lambda = lambda o: {}
 
@@ -1213,8 +1214,9 @@ def DefineConfiguredTests():
         elif threads == 'queue_x_thread_list':
             AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
                 lambda o: {AppendFile(o['name'], testcsv)})
-            for (queuedepth, threads) in queue_x_thread_list:
-                desc = "%s, QueueDepth=%d Threads=%d" % (testname, queuedepth, threads)
+            for item in queue_x_thread_list:
+                queuedepth, threads = eval(item)
+                desc = "%s, QD=%d Threads=%d" % (testname, queuedepth, threads)
                 DoAddTest(testname, seqrand, wmix, bs, threads, queuedepth, desc,
                         iops_log, runtime)
         elif bs == 'block_size_list':
