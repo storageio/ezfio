@@ -185,7 +185,7 @@ def ParseArgs():
     """Parse command line options into globals."""
     global physDrive, physDriveDict, physDriveTxt, utilization, nullio, isFile
     global outputDest, offset, cluster, yes, quickie, verify, fastPrecond
-    global readOnly, test_config_file
+    global readOnly, test_config_file, maxThreads
 
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -203,7 +203,8 @@ WARNING: All data on the target device will be DESTROYED by this test.""")
                         help="Test cases config file.", required=False)
     parser.add_argument("--cluster", dest="cluster", action='store_true',
                         help="Run the test on a cluster (--drive in "+
-                        "host1:/dev/p1,host2:/dev/ps,...)", required=False)
+                        "'host1:/dev/p1,/dev/p2;host2:/dev/ps,...'). "+
+                        "you need to run fio --server on each host first.", required=False)
     parser.add_argument("--verify", dest="verify", action='store_true',
                         help="Have FIO perform data verifications on reads."+
                         " May impact performance", required=False)
@@ -231,6 +232,9 @@ WARNING: All data on the target device will be DESTROYED by this test.""")
                         action='store_true', required=False)
     parser.add_argument("--readonly", dest="readonly", help="Only run read-only tests, don't write to device",
                         action='store_true', required=False)
+    parser.add_argument("--max-threads", dest="maxThreads", type=int, default="0",
+                        help="Max threads for each fio job, "+
+                        "if the devices * thread more than maxThreads, you have to run cluster mode", required=False)
     args = parser.parse_args()
 
     test_config_file = args.test_config
@@ -247,6 +251,12 @@ WARNING: All data on the target device will be DESTROYED by this test.""")
     cluster = args.cluster
     isFile = args.file
     readOnly = args.readonly
+    maxThreads = args.maxThreads
+
+    if maxThreads > 0 and not cluster:
+        print("ERROR:  --max-threads option must be used together with --cluster option.")
+        parser.print_help()
+        sys.exit(1)
 
     # For cluster mode, we add a new physDriveList dict and fake physDrive
     if cluster:
@@ -320,7 +330,7 @@ def CollectSystemInfo():
             cpuFreqMHz = int(round(float(grep(cpuinfo, r'clock')[0].split(': ')[1][:-3])))
     else:
         model_names = grep(cpuinfo, r'model name')
-        if model_names and model_names.strip() != '':
+        if model_names and len(model_names) > 0:
             cpu = model_names[0].split(': ')[1].replace('(R)', '').replace('(TM)', '')
         cpuCores = len(model_names)
         try:
@@ -565,6 +575,13 @@ def SequentialConditioning():
         os.unlink(jobfile.name)
 
     if code != 0:
+        if 'Connection refused' in err:
+            sys.stdout.flush()
+            print('');
+            print('');
+            print('=========================================================================================================');
+            print('Connection refused! Please check if you have start the fio with \'fio --server\' and your firewall rules.');
+            print('=========================================================================================================');
         raise FIOError(" ".join(cmdline), code, err, out)
     else:
         return "DONE", "DONE", "DONE"
@@ -636,7 +653,7 @@ def RandomConditioning():
 
 def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
     """Runs the specified test, generates output CSV lines."""
-    global cluster, physDriveDict
+    global cluster, physDriveDict, maxThreads
 
     # Taken from fio_latency2csv.py - needed to convert funky semi-log to normal latencies
     def plat_idx_to_val(idx, FIO_IO_U_PLAT_BITS=6, FIO_IO_U_PLAT_VAL=64):
@@ -899,19 +916,65 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
     else:
         jobfile = []
         for host in physDriveDict.keys():
-            newjob = GenerateJobfile(rw, wmix, bs, physDriveDict[host], testcapacity,
-                                     runtime + extra_runtime, threads, iodepth, testoffset)
-            cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
-            AppendFile('[JOBFILE-' + str(host) + "]", testfile)
-            with open(newjob.name, 'r') as of:
-                txt = of.read()
-                AppendFile(txt, testfile)
-            jobfile = jobfile + [newjob]
-            if iops_log:
-                AppendFile("write_iops_log=" + testfile, newjob.name)
-                AppendFile("write_lat_log=" + testfile, newjob.name)
-                AppendFile("log_avg_msec=1000", newjob.name)
-                AppendFile("log_unix_epoch=0", newjob.name)
+            drives = physDriveDict[host]
+            drive_list = drives.split(",")
+            if maxThreads > 0 and len(drive_list) * threads > maxThreads:
+                th_count = 0
+                proc_count = 0
+                device_list = []
+                for i in drive_list:
+                    th_count += threads
+                    if th_count <= maxThreads:
+                        device_list.append(i)
+                    else:
+                        th_count = 0
+                        devices  = ','.join(device_list)
+                        device_list = []
+                        newjob = GenerateJobfile(rw, wmix, bs, devices, testcapacity,
+                                                runtime + extra_runtime, threads, iodepth, testoffset)
+                        cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
+                        AppendFile('[JOBFILE-' + str(host) + "-" + str(proc_count) + "]", testfile)
+                        with open(newjob.name, 'r') as of:
+                            txt = of.read()
+                            AppendFile(txt, testfile)
+                        jobfile = jobfile + [newjob]
+                        if iops_log:
+                            AppendFile("write_iops_log=" + testfile, newjob.name)
+                            AppendFile("write_lat_log=" + testfile, newjob.name)
+                            AppendFile("log_avg_msec=1000", newjob.name)
+                            AppendFile("log_unix_epoch=0", newjob.name)
+                        proc_count += 1
+                        device_list.append(i)
+                
+                if len(device_list) > 0:
+                    devices  = ','.join(device_list)
+                    newjob = GenerateJobfile(rw, wmix, bs, devices, testcapacity,
+                                            runtime + extra_runtime, threads, iodepth, testoffset)
+                    cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
+                    AppendFile('[JOBFILE-' + str(host) + "-" + str(proc_count) + "]", testfile)
+                    with open(newjob.name, 'r') as of:
+                        txt = of.read()
+                        AppendFile(txt, testfile)
+                    jobfile = jobfile + [newjob]
+                    if iops_log:
+                        AppendFile("write_iops_log=" + testfile, newjob.name)
+                        AppendFile("write_lat_log=" + testfile, newjob.name)
+                        AppendFile("log_avg_msec=1000", newjob.name)
+                        AppendFile("log_unix_epoch=0", newjob.name)
+            else:
+                newjob = GenerateJobfile(rw, wmix, bs, physDriveDict[host], testcapacity,
+                                        runtime + extra_runtime, threads, iodepth, testoffset)
+                cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
+                AppendFile('[JOBFILE-' + str(host) + "]", testfile)
+                with open(newjob.name, 'r') as of:
+                    txt = of.read()
+                    AppendFile(txt, testfile)
+                jobfile = jobfile + [newjob]
+                if iops_log:
+                    AppendFile("write_iops_log=" + testfile, newjob.name)
+                    AppendFile("write_lat_log=" + testfile, newjob.name)
+                    AppendFile("log_avg_msec=1000", newjob.name)
+                    AppendFile("log_unix_epoch=0", newjob.name)
 
     cmdline = cmdline + ['--output-format=' + str(fioOutputFormat)]
 
@@ -1228,12 +1291,15 @@ def DefineConfiguredTests():
         wmix = test.get('writepct')
         bs = test.get('blocksize')
         threads = test.get('threads', '')
-        if test.get('runtime') and test.get('runtime') == 'shorttime':
-            runtime = shorttime
-        elif test.get('runtime') and test.get('runtime') == 'longtime':
-            runtime = longtime
+        if test.get('runtime'):
+            if test.get('runtime') == 'shorttime':
+                runtime = shorttime
+            elif test.get('runtime') == 'longtime':
+                runtime = longtime
+            else:
+                runtime = int(test.get('runtime'))
         else:
-            runtime = None
+            runtime = shorttime
 
         iops_log = test.get('iops_log')
         iodepth = test.get('queue_depth')
@@ -1259,9 +1325,10 @@ def DefineConfiguredTests():
         else:
             cmd_lambda = lambda o: {}
 
-        if not wmix:
+        if not bs or bs == 0:
             AddTest(testname, seqrand, '', '', '', '', '',
                 '', '', cmd_lambda)
+            break
 
         if threads == 'threads_list':
             AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
