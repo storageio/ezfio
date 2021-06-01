@@ -1032,16 +1032,17 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
         # Chomp anything before the json.
         for i in range(0, len(out)):
             if out[i] == '{':
+                print(out[:i])
                 out = out[i:]
                 break
+
         j = json.loads(out)
-        
+
         if cluster and len(physDriveDict.keys()) == 1:
             client = j['client_stats'][0]
         elif cluster:
             for res in j['client_stats']:
                 if res['jobname'] == "All clients":
-                    print('all clients')
                     client = res
                     break
 
