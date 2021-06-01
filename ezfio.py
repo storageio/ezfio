@@ -250,7 +250,7 @@ WARNING: All data on the target device will be DESTROYED by this test.""")
 
     # For cluster mode, we add a new physDriveList dict and fake physDrive
     if cluster:
-        nodes = physDrive.split(",")
+        nodes = physDrive.split(";")
         for node in nodes:
             physDriveDict[node.split(":")[0]] = node.split(":")[1]
         physDrive = nodes[0].split(":")[1]
@@ -320,7 +320,8 @@ def CollectSystemInfo():
             cpuFreqMHz = int(round(float(grep(cpuinfo, r'clock')[0].split(': ')[1][:-3])))
     else:
         model_names = grep(cpuinfo, r'model name')
-        cpu = model_names[0].split(': ')[1].replace('(R)', '').replace('(TM)', '')
+        if model_names and model_names.strip() != '':
+            cpu = model_names[0].split(': ')[1].replace('(R)', '').replace('(TM)', '')
         cpuCores = len(model_names)
         try:
             code, dmidecode, err = Run(['dmidecode', '--type', 'processor'])
@@ -744,6 +745,58 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
         jobfile.close()
         return jobfile
 
+    def CombineAllClientStats(stats):
+        client = {}
+        client['jobname'] = "All clients"
+
+        client['sys_cpu'] = 0
+        client['usr_cpu'] = 0
+
+        client['read'] = {}
+        client['read']['io_bytes'] = 0
+        client['read']['io_kbytes'] = 0
+        client['read']['bw_bytes'] = 0
+        client['read']['bw'] = 0
+        client['read']['iops'] = 0
+        client['read']['total_ios'] = 0
+        client['read']['drop_ios'] = 0
+        client['read']['lat_ns'] = {}
+        client['read']['lat_ns']['mean'] = 0
+
+        client['write'] = {}
+        client['write']['iops'] = 0
+        client['write']['bw'] = 0
+        client['write']['total_ios'] = 0
+        client['write']['lat_ns'] = {}
+        client['write']['lat_ns']['mean'] = 0
+
+        if len(stats) == 0:
+            return client       
+
+        item_count = 0
+        for item in stats:
+            item_count += 1
+            client['sys_cpu'] += float(item['sys_cpu'])
+            client['usr_cpu'] += float(item['usr_cpu'])
+
+            client['read']['bw'] += float(item['read']['bw'])
+            client['read']['iops'] += float(item['read']['iops'])
+            client['read']['total_ios'] += float(item['read']['total_ios'])
+            client['read']['lat_ns']['mean'] += float(item['read']['lat_ns']['mean'])
+
+            client['write']['iops'] += float(item['write']['iops'])
+            client['write']['bw'] += float(item['write']['bw'])
+            client['write']['total_ios'] += float(item['write']['total_ios'])
+            client['write']['lat_ns']['mean'] += float(item['write']['lat_ns']['mean'])
+ 
+        client['sys_cpu'] = client['sys_cpu'] / item_count
+        client['usr_cpu'] = client['usr_cpu'] / item_count
+        client['read']['lat_ns']['mean'] = item['read']['lat_ns']['mean'] / item_count
+        client['write']['lat_ns']['mean'] = item['write']['lat_ns']['mean'] / item_count
+
+        return client
+
+
     def CombineThreadOutputs(suffix, outcsv, lat):
         """Merge all FIO iops/lat logs across all servers"""
         # The lists may be called "iops" but the same works for clat/slat
@@ -911,6 +964,7 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
     wlat = 0
     syscpu = 0
     usrcpu = 0
+    client = None
     if not skiptest:
         # Chomp anything before the json.
         for i in range(0, len(out)):
@@ -918,14 +972,19 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                 out = out[i:]
                 break
         j = json.loads(out)
-
+        
         if cluster and len(physDriveDict.keys()) == 1:
             client = j['client_stats'][0]
         elif cluster:
             for res in j['client_stats']:
                 if res['jobname'] == "All clients":
+                    print('all clients')
                     client = res
                     break
+
+            if not client:
+                client = CombineAllClientStats(j['client_stats'])
+                    
         else:
             client = j['jobs'][0]
 
