@@ -1327,10 +1327,10 @@ def DefineConfiguredTests():
         else:
             cmd_lambda = lambda o: {}
 
-        if not bs or bs == 0:
+        if not bs or bs == 0 or bs == '':
             AddTest(testname, seqrand, '', '', '', '', '',
                 '', '', cmd_lambda)
-            break
+            continue
 
         if threads == 'threads_list':
             AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
