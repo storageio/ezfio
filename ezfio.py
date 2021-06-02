@@ -1039,7 +1039,7 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
 
         j = json.loads(out)
 
-        if cluster and len(physDriveDict.keys()) == 1:
+        if cluster:
             for res in j['client_stats']:
                 if res['jobname'] == "All clients":
                     client = res
