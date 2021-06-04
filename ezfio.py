@@ -51,6 +51,7 @@ import yaml
 def GetDefaultConfig():
     default_config = {}
     default_config['global'] = {}
+    default_config['global']['template'] = 'original.ods'
     default_config['global']['shorttime'] = 120
     default_config['global']['longtime'] = 1200
     default_config['global']['block_size_list'] = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
@@ -485,9 +486,12 @@ def SetupFiles():
                timeseriesslatcsv)  # Add IOPS header
 
     # ODS input and output files
-    odssrc = os.path.dirname(os.path.realpath(__file__)) + "/original.ods"
+    template = 'original.ods'
+    if test_config['global'].get('template'):
+        template = test_config['global']['template']
+    odssrc =  "%s/%s" % (os.path.dirname(os.path.realpath(__file__)), template)
     if not os.path.exists(odssrc):
-        print("ERROR: Can't find original ODS spreadsheet '" + odssrc + "'.")
+        print("ERROR: Can't find template ODS spreadsheet '" + odssrc + "'.")
         sys.exit(1)
     odsdest = outputDest + "/ezfio_results_"+suffix+".ods"
     if os.path.exists(odsdest):

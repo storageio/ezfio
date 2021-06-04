@@ -5,6 +5,7 @@
 #    longtime = 1200  # Runtime of long-running tests
 
 global:
+  template: simple_template.ods
   shorttime: 120
   longtime: 1200
   block_size_list:
@@ -95,6 +96,14 @@ tests:
   - test: Sustained Multi-Threaded Sequential 1M Write Tests
     rand: Seq
     writepct: 100
+    blocksize: 1048576
+    threads: queue_x_thread_list
+    runtime: shorttime
+    queue_depth: queue_x_thread_list
+    iops_log: false
+  - test: Sustained Multi-Threaded Sequential 1M mixed 30% Write Tests
+    rand: Seq
+    writepct: 30
     blocksize: 1048576
     threads: queue_x_thread_list
     runtime: shorttime
