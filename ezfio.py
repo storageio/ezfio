@@ -1291,6 +1291,11 @@ def DefineConfiguredTests():
 
 
     for test in test_config.get('tests'):
+        if test.get('condition'):
+            if not eval(test.get('condition')):
+                print("Test is skipped as conditon [%s] is not true" % test.get('condition'))
+                continue
+
         testname = test.get('test')
         desc = test.get('desc', '')
         seqrand = test.get('rand')
@@ -1366,11 +1371,6 @@ def DefineConfiguredTests():
                 DoAddTest(testname, seqrand, wmix, bs, threads, queue_depth, desc,
                   iops_log, runtime)
         else:
-            if test.get('condition'):
-                if not eval(test.get('condition')):
-                    print("Test is skipped as conditon [%s] is not true" % test.get('condition'))
-                    continue
-
             AddTest(testname, seqrand, wmix, bs, threads,
                 iodepth, iops_log, runtime, desc, cmd_lambda)
 
