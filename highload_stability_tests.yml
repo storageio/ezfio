@@ -1,0 +1,93 @@
+global:
+  template: stability_template.ods
+  shorttime: 120
+  #longtime: 3600 # 1 Hours
+  longtime: 86400 # 24 Hours
+  block_size_list:
+    - 512
+    - 1024
+    - 2048
+    - 4096
+    - 8192
+    - 16384
+    - 32768
+    - 65536
+    - 131072
+    - 262144
+    - 524288
+    - 1048576
+  queue_depth_list:
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32
+    - 64
+    - 128
+    - 256
+  threads_list:
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32
+    - 64
+    - 128
+    - 256
+  queue_x_thread_list:
+    - (1, 1)
+    - (1, 2)
+    - (2, 1)
+    - (2, 2)
+    - (2, 4)
+    - (4, 2)
+    - (4, 4)
+    - (4, 8)
+    - (8, 4)
+    - (8, 8)
+    - (8, 16)
+    - (16, 8)
+    - (16, 16)
+    - (8, 32)
+    - (32, 8)Stability
+    - (32, 32)
+tests:
+  - test: Sequential Preconditioning
+    rand: Preparation
+    condition: not fastPrecond
+  - test: Sequential Preconditioning
+    desc: Sequential Preconditioning Pass 1
+    condition: not fastPrecond
+    rand: Seq Pass 1
+    writepct: 100
+    blocksize: 1048576
+    threads: 4
+    queue_depth: 16
+    iops_log: false
+    cmd_line: SequentialConditioning
+  - test: Sequential Preconditioning
+    desc: Sequential Preconditioning Pass 2
+    condition: not fastPrecond
+    rand: Seq Pass 2
+    writepct: 100
+    blocksize: 1048576
+    threads: 4
+    queue_depth: 16
+    iops_log: false
+    cmd_line: SequentialConditioning
+  - test: Sustained Perf Stability Test - 4KB Random 30% Write
+    desc: Sustained Perf Stability Test - 4KB Random 30% Write
+    rand: Preparation
+    cmd_line: AppendFile
+  - test: Sustained Perf Stability Test - 4KB Random 30% Write
+    desc: Sustained Perf Stability Test - 4KB Random 30% Write
+    rand: Rand
+    writepct: 30
+    blocksize: 4096
+    threads: 16
+    runtime: longtime
+    queue_depth: 8
+    iops_log: true
+    cmd_line: RunTest

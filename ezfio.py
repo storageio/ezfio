@@ -235,7 +235,9 @@ WARNING: All data on the target device will be DESTROYED by this test.""")
                         action='store_true', required=False)
     parser.add_argument("--max-threads", dest="maxThreads", type=int, default="0",
                         help="Max threads for each fio job, "+
-                        "if the devices * thread more than maxThreads, you have to run cluster mode", required=False)
+                        "if the devices * thread more than maxThreads, you have to run cluster mode. "+
+                        "You also need to check the env of your fio server with 'ulimit -a', "+
+                        "make sure the 'open files' config is enough.", required=False)
     args = parser.parse_args()
 
     test_config_file = args.test_config
@@ -820,6 +822,16 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
 
     def CombineThreadOutputs(suffix, outcsv, lat):
         """Merge all FIO iops/lat logs across all servers"""
+        disble_shrink = False
+        if disble_shrink:
+            shrink_ratio = 1
+            item_count = runtime + extra_runtime
+        else:
+            shrink_ratio = CalculateShrinkRatio(runtime + extra_runtime, threshold)
+            if shrink_ratio == 1:
+                item_count = runtime + extra_runtime
+            else:
+                item_count = threshold
         # The lists may be called "iops" but the same works for clat/slat
         iops = [0] * (runtime + extra_runtime)
         # For latencies, need to keep the _w and _r separate
@@ -827,6 +839,7 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
         host_iops = OrderedDict()
         host_iops_w = OrderedDict()
         filecnt = 0
+
         if not cluster:
             pdd = OrderedDict()
             pdd['localhost'] = 1 # Just the single host, faked here
@@ -852,7 +865,10 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                 riops = 0
                 wiops = 0
                 nexttime = 0
-                for x in range(0, runtime + extra_runtime):
+                x = 0
+                for time_item in range(0, runtime + extra_runtime):
+                    if time_item >= ((x + 1) * shrink_ratio):
+                        x += 1
                     if not lat:
                         iops[x] = iops[x] + riops + wiops
                         host_iops[host][x] = host_iops[host][x] + riops + wiops
@@ -872,22 +888,22 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
 
         # Generate the combined CSV
         with open(outcsv, 'a') as f:
-            for cnt in range(int(extra_runtime/2), runtime + extra_runtime):
+            for cnt in range(0, item_count):
                 if filecnt > 0 and lat:
-                    line = str(float(iops[cnt])/float(filecnt))
-                    line = line + ',' + str(float(iops_w[cnt])/float(filecnt))
+                    line = str(float(iops[cnt])/float(filecnt)/float(shrink_ratio))
+                    line = line + ',' + str(float(iops_w[cnt])/float(filecnt)/float(shrink_ratio))
                 else:
-                    line = str(iops[cnt])
+                    line = str(float(iops[cnt])/float(shrink_ratio))
                 if len(pdd.keys()) > 1:
                     for host in pdd.keys():
                         if filecnt > 0 and lat:
                             line = line + ',' + \
-                                str(float(host_iops[host][cnt])/float(filecnt))
+                                str(float(host_iops[host][cnt])/float(filecnt)/float(shrink_ratio))
                             line = line + ',' + \
                                 str(float(host_iops_w[host]
-                                          [cnt])/float(filecnt))
+                                          [cnt])/float(filecnt)/float(shrink_ratio))
                         else:
-                            line = line + "," + str(host_iops[host][cnt])
+                            line = line + "," + str(float(host_iops[host][cnt])/float(shrink_ratio))
                 f.write(line + "\n")
 
     # Output file names
@@ -980,6 +996,12 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                     AppendFile("log_avg_msec=1000", newjob.name)
                     AppendFile("log_unix_epoch=0", newjob.name)
 
+    def CalculateShrinkRatio(runtime, threshold):
+        shrink_ratio = 1
+        if runtime >= 2 * threshold:
+            shrink_ratio = int(runtime / threshold)
+        return shrink_ratio
+
     cmdline = cmdline + ['--output-format=' + str(fioOutputFormat)]
 
     # There are some NVME drives with 4k physical and logical out there.
@@ -1021,6 +1043,7 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
         raise FIOError(" ".join(cmdline), code, err, out)
 
     if iops_log:
+        threshold = 3200
         CombineThreadOutputs('_iops', timeseriescsv, False)
         CombineThreadOutputs('_clat', timeseriesclatcsv, True)
         CombineThreadOutputs('_slat', timeseriesslatcsv, True)
@@ -1412,7 +1435,9 @@ def RunAllTests():
             print("\nFIO Error!\n" + e.cmdline + "\nSTDOUT:\n" + e.stdout)
             print("STDERR:\n" + e.stderr)
             raise
-        except:
+        except Exception as e:
+            print("\nUnexpected Error!\n" + "\nSTDOUT:\n" + e.stdout)
+            print("STDERR:\n" + e.stderr)
             print("\nUnexpected error while running FIO job.")
             raise
 
