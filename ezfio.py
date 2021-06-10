@@ -182,6 +182,29 @@ def CheckAIOLimits():
         pass
 
 
+def PdshLikeStringCovert(input_str):
+    content = input_str
+    if '[' in input_str and ']' in input_str and input_str.index('[') < input_str.index(']'):
+        out_list = []
+        left = input_str[0:input_str.index('[')]
+        right = input_str[input_str.index(']')+1:]
+        content = input_str[input_str.index('[')+1:input_str.index(']')]
+        for section in content.split(','):
+            if '-' in section:
+                start = section[:section.index('-')]
+                end = section[section.index('-')+1:]
+                if int(start) < 0 or int(end) <= 0 or int(start) > int(end):
+                    print('wrong format input - %s' % input_str)
+                    sys.exit(1)
+                for i in range(int(start), int(end)+1):
+                    out_list.append('%s%s%s' % (left, i, right))
+            else:
+                out_list.append('%s%s%s' % (left, section, right))
+        content = ','.join(out_list)
+
+    return content
+
+
 def ParseArgs():
     """Parse command line options into globals."""
     global physDrive, physDriveDict, physDriveTxt, utilization, nullio, isFile
@@ -265,8 +288,10 @@ WARNING: All data on the target device will be DESTROYED by this test.""")
     if cluster:
         nodes = physDrive.split(";")
         for node in nodes:
-            physDriveDict[node.split(":")[0]] = node.split(":")[1]
-        physDrive = nodes[0].split(":")[1]
+            physDriveDict[node.split(":")[0]] = PdshLikeStringCovert(node.split(":")[1])
+        physDrive = PdshLikeStringCovert(nodes[0].split(":")[1])
+    else:
+        physDrive = PdshLikeStringCovert(physDrive)
 
     if (utilization < 1) or (utilization > 100):
         print("ERROR:  Utilization must be between 1...100")
