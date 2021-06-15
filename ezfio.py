@@ -57,6 +57,8 @@ def GetDefaultConfig():
     default_config['global']['block_size_list'] = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
     default_config['global']['queue_depth_list'] = [1, 2, 4, 8, 16, 32, 64, 128, 256]
     default_config['global']['threads_list'] = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    default_config['global']['queue_x_thread_list'] = [(1, 1), (1, 2), (2, 1), (2, 2), (2, 4), (4, 2), (4, 4), (4, 8), (8, 4), (8, 8), (8, 16), (16, 8), (16, 16), (8, 32), (32, 8), (16, 32), (32, 16), (32, 32), (64, 32)]
+
     return default_config
 
 
@@ -79,7 +81,7 @@ def CheckTestConfig():
                 test_config['global'] = default_config['global']
             else:
                 for item_key in default_config['global'].keys():
-                    if not test_config['global'][item_key]:
+                    if not test_config['global'].get(item_key):
                         test_config['global'][item_key] = default_config['global'][item_key]
 
         print('Passed')
