@@ -761,7 +761,7 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                             ",".join((str(plat_idx_to_val(b, plat_bits, plat_val)),
                                       str(pctile))), outfile)
 
-    def GenerateJobfile(rw, wmix, bs, drive, testcapacity, runtime, threads, iodepth, testoffset):
+    def GenerateJobfile(testfile, rw, wmix, bs, drive, testcapacity, runtime, threads, iodepth, testoffset):
         """Make a jobfile for the specified test parameters"""
         global verify, nullio
         jobfile = tempfile.NamedTemporaryFile(delete=False, mode='w')
@@ -792,6 +792,13 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                 jobfile.write("verify=crc32c\n")
                 jobfile.write("random_generator=lfsr\n")
             jobfile.write("offset=" + str(testoffset) + "G\n")
+
+            if iops_log:
+                jobfile.write("write_iops_log=%s\n" % testfile)
+                jobfile.write("write_lat_log=%s\n" % testfile)
+                jobfile.write("log_avg_msec=1000\n")
+                jobfile.write("log_unix_epoch=0\n")
+
         jobfile.close()
         return jobfile
 
@@ -948,18 +955,18 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
 
     cmdline = [fio]
     if not cluster:
-        jobfile = GenerateJobfile(rw, wmix, bs, physDrive, testcapacity,
+        jobfile = GenerateJobfile(testfile, rw, wmix, bs, physDrive, testcapacity,
                                   runtime + extra_runtime, threads, iodepth, testoffset)
         cmdline = cmdline + [jobfile.name]
         AppendFile("[JOBFILE]", testfile)
         with open(jobfile.name, 'r') as of:
             txt = of.read()
             AppendFile(txt, testfile)
-        if iops_log:
-            AppendFile("write_iops_log=" + testfile, jobfile.name)
-            AppendFile("write_lat_log=" + testfile, jobfile.name)
-            AppendFile("log_avg_msec=1000", jobfile.name)
-            AppendFile("log_unix_epoch=0", jobfile.name)
+        #if iops_log:
+        #    AppendFile("write_iops_log=" + testfile, jobfile.name)
+        #    AppendFile("write_lat_log=" + testfile, jobfile.name)
+        #    AppendFile("log_avg_msec=1000", jobfile.name)
+        #    AppendFile("log_unix_epoch=0", jobfile.name)
     else:
         jobfile = []
         for host in physDriveDict.keys():
@@ -977,7 +984,7 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                         th_count = 0
                         devices  = ','.join(device_list)
                         device_list = []
-                        newjob = GenerateJobfile(rw, wmix, bs, devices, testcapacity,
+                        newjob = GenerateJobfile(testfile, rw, wmix, bs, devices, testcapacity,
                                                 runtime + extra_runtime, threads, iodepth, testoffset)
                         cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
                         AppendFile('[JOBFILE-' + str(host) + "-" + str(proc_count) + "]", testfile)
@@ -985,17 +992,17 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                             txt = of.read()
                             AppendFile(txt, testfile)
                         jobfile = jobfile + [newjob]
-                        if iops_log:
-                            AppendFile("write_iops_log=" + testfile, newjob.name)
-                            AppendFile("write_lat_log=" + testfile, newjob.name)
-                            AppendFile("log_avg_msec=1000", newjob.name)
-                            AppendFile("log_unix_epoch=0", newjob.name)
+                        #if iops_log:
+                        #    AppendFile("write_iops_log=" + testfile, newjob.name)
+                        #    AppendFile("write_lat_log=" + testfile, newjob.name)
+                        #    AppendFile("log_avg_msec=1000", newjob.name)
+                        #    AppendFile("log_unix_epoch=0", newjob.name)
                         proc_count += 1
                         device_list.append(i)
                 
                 if len(device_list) > 0:
                     devices  = ','.join(device_list)
-                    newjob = GenerateJobfile(rw, wmix, bs, devices, testcapacity,
+                    newjob = GenerateJobfile(testfile, rw, wmix, bs, devices, testcapacity,
                                             runtime + extra_runtime, threads, iodepth, testoffset)
                     cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
                     AppendFile('[JOBFILE-' + str(host) + "-" + str(proc_count) + "]", testfile)
@@ -1003,13 +1010,13 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                         txt = of.read()
                         AppendFile(txt, testfile)
                     jobfile = jobfile + [newjob]
-                    if iops_log:
-                        AppendFile("write_iops_log=" + testfile, newjob.name)
-                        AppendFile("write_lat_log=" + testfile, newjob.name)
-                        AppendFile("log_avg_msec=1000", newjob.name)
-                        AppendFile("log_unix_epoch=0", newjob.name)
+                    #if iops_log:
+                    #    AppendFile("write_iops_log=" + testfile, newjob.name)
+                    #    AppendFile("write_lat_log=" + testfile, newjob.name)
+                    #    AppendFile("log_avg_msec=1000", newjob.name)
+                    #    AppendFile("log_unix_epoch=0", newjob.name)
             else:
-                newjob = GenerateJobfile(rw, wmix, bs, physDriveDict[host], testcapacity,
+                newjob = GenerateJobfile(testfile, rw, wmix, bs, physDriveDict[host], testcapacity,
                                         runtime + extra_runtime, threads, iodepth, testoffset)
                 cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
                 AppendFile('[JOBFILE-' + str(host) + "]", testfile)
@@ -1017,11 +1024,11 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                     txt = of.read()
                     AppendFile(txt, testfile)
                 jobfile = jobfile + [newjob]
-                if iops_log:
-                    AppendFile("write_iops_log=" + testfile, newjob.name)
-                    AppendFile("write_lat_log=" + testfile, newjob.name)
-                    AppendFile("log_avg_msec=1000", newjob.name)
-                    AppendFile("log_unix_epoch=0", newjob.name)
+                #if iops_log:
+                #    AppendFile("write_iops_log=" + testfile, newjob.name)
+                #    AppendFile("write_lat_log=" + testfile, newjob.name)
+                #    AppendFile("log_avg_msec=1000", newjob.name)
+                #    AppendFile("log_unix_epoch=0", newjob.name)
 
     def CalculateShrinkRatio(runtime, threshold):
         shrink_ratio = 1
