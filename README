@@ -3,21 +3,20 @@ ezFIO Enhancement V1.0
 wangsf@taocloudx.com
 
 Improvements to ezFIO:
-1. 增加--test-config，支持可配置参数的测试集合
-2. 简化多客户端输入，如./ezfio.py --drive 'host1:/dev/dr1,/dev/dr2;host2:/dev/dr2,/dev/dr3...'
-3. 增加--max-threads参数，支持测试多块盘时自动根据max-threads裂变为多进程+多线程模式
-4. 提供多套默认测试配置和相应的输出模版
-5. 支持长时间压力测试，支持将长时间测试结果进行合并
-6. 支持类似于pdsh的输入格式，如./ezfio.py --drive '/dev/nvme[1-10,15-20]n1'
-
+1. Add --test-config option, it supports configurable test cases in yaml format.
+2. Simplify input for multi hosts, for eg, ./ezfio.py --drive 'host1:/dev/dr1,/dev/dr2;host2:/dev/dr2,/dev/dr3...'
+3. Add --max-threads option, combined with --cluster, it supports split the test mode to multi-proccesses + multi-threads based on max-threads.
+4. Provide several test config files and related output templates.
+5. Support long time stability test, it also shrink the outputs to adjust to the template.
+6. Support simple drive input like pdsh, for eg, ./ezfio.py --drive '/dev/nvme[1-10,15-20]n1'
 
 Bug Fixes:
-1. 解决多客户端测试只能使用1块盘的问题
-2. 解决多客户端测试，FIO输出有的版本不包含All clients问题
-3. 解决多客户端测试多块盘时IOPS的统计问题
+1. Resovled the issue that multi hosts can only use one disk for each.
+2. Resolved the issue that some fio output doesn't contain 'All clients' for multi hosts.
+3. Resolved the issue the IOPS statistics is not correct when testing multi drives.
 
 Known Issue:
-1. 线程数多了之后，如256线程数+队列深度8，统计的IOPS Timeseries数据不对
+1. After increase the test thread count, for eg, 256 threads + 8 iodepth, the statistics data for IOPS Timeseries is not correct.
 
 ------------------------------------------------------------------------
 
