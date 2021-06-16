@@ -1,0 +1,33 @@
+global:
+  template: stability_template.ods
+  shorttime: 120
+  #longtime: 3600 # 1 Hours
+  longtime: 86400 # 24 Hours
+tests:
+  - test: Sequential Preconditioning
+    rand: Preparation
+    condition: not fastPrecond
+  - test: Sequential Preconditioning
+    desc: Sequential Preconditioning Pass 1
+    condition: not fastPrecond
+    rand: Seq Pass 1
+    writepct: 100
+    blocksize: 1048576
+    threads: 4
+    queue_depth: 16
+    iops_log: false
+    cmd_line: SequentialConditioning
+  - test: Sustained Perf Stability Test - 4KB Random 30% Write
+    desc: Sustained Perf Stability Test - 4KB Random 30% Write
+    rand: Preparation
+    cmd_line: AppendFile
+  - test: Sustained Perf Stability Test - 4KB Random 30% Write
+    desc: Sustained Perf Stability Test - 4KB Random 30% Write
+    rand: Rand
+    writepct: 30
+    blocksize: 4096
+    threads: 16
+    runtime: longtime
+    queue_depth: 8
+    iops_log: true
+    cmd_line: RunTest

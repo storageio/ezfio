@@ -1,3 +1,26 @@
+------------------------------------------------------------------------
+ezFIO Enhancement V1.0
+wangsf@taocloudx.com
+
+Improvements to ezFIO:
+1. 增加--test-config，支持可配置参数的测试集合
+2. 简化多客户端输入，如./ezfio.py --drive 'host1:/dev/dr1,/dev/dr2;host2:/dev/dr2,/dev/dr3...'
+3. 增加--max-threads参数，支持测试多块盘时自动根据max-threads裂变为多进程+多线程模式
+4. 提供多套默认测试配置和相应的输出模版
+5. 支持长时间压力测试，支持将长时间测试结果进行合并
+6. 支持类似于pdsh的输入格式，如./ezfio.py --drive '/dev/nvme[1-10,15-20]n1'
+
+
+Bug Fixes:
+1. 解决多客户端测试只能使用1块盘的问题
+2. 解决多客户端测试，FIO输出有的版本不包含All clients问题
+3. 解决多客户端测试多块盘时IOPS的统计问题
+
+Known Issue:
+1. 线程数多了之后，如256线程数+队列深度8，统计的IOPS Timeseries数据不对
+
+------------------------------------------------------------------------
+
 ezFIO V1.0
 (C) Copyright 2015-18 HGST
 earle.philhower.iii@hgst.com
@@ -48,7 +71,7 @@ to allow testing performance of shared storage systems like SANs or
 AFAs.
 
 Start a "fio --server" job on all clients, then on one of them run
-./ezfio.py --cluster --drive host1:/dev/dr1,host2:/dev/dr2/... ...
+./ezfio.py --cluster --drive 'host1:/dev/dr1,/dev/dr2;host2:/dev/dr1/...' ...
 
 Basically add "--cluster" to the command line before the drive
 option, and in the drive option make a comma separated list of
@@ -76,7 +99,7 @@ Start up FIO servers on all systems to be tested
 
 Run a benchmark run:
 (on host 1)
-  # ./ezfio.py --cluster --drive host1:/dev/nvme1n1,host2:/dev/nvme1n1,host3:/dev/nvme4n1
+  # ./ezfio.py --cluster --drive 'host1:/dev/nvme1n1,/dev/nvme2n1;host2:/dev/nvme1n1,/dev/nvme2n1;host3:/dev/nvme4n1,/dev/nvme2n1'
 
 ------------------------------------------------------------------------
 

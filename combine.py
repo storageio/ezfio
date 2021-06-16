@@ -68,8 +68,12 @@ def GenerateCombinedODS():
         """Extract content.xml from an ODS file, where the sheet lives."""
         ziparchive = zipfile.ZipFile( odssrc )
         content = ziparchive.read("content.xml")
-        content = content.replace("\n", "")
-        return content
+        if isinstance(content, bytes):
+            content_str = content.decode("utf-8")
+        else:
+            content_str = content
+        content_str = content_str.replace("\n", "")
+        return content_str
 
     def CSVtoXMLSheet(sheetName, csvName):
         """Replace a named sheet with the contents of a CSV file."""
@@ -148,6 +152,7 @@ VNEBUEsFBgAAAAABAAEAWgAAAFQAAAAAAA==
             elif ("Object" in entry) and ("content.xml" in entry):
                 # Remove <table:table table:name="local-table"> table
                 rdbytes = zasrc.read(entry)
+                rdbytes = rdbytes.decode("utf-8")
                 outbytes = re.sub('<table:table table:name="local-table">.*</table:table>', "", rdbytes)
                 # Add in extra chart series following existing format...
                 searchStr = '<chart:series .*</chart:series>'
@@ -189,7 +194,8 @@ VNEBUEsFBgAAAAABAAEAWgAAAFQAAAAAAA==
                 # Remove ObjectReplacements from the list
                 rdbytes = zasrc.read(entry)
                 outbytes = ""
-                lines = rdbytes.split("\n")
+                rdstr = rdbytes.decode("utf-8")
+                lines = rdstr.split("\n")
                 for line in lines:
                     if not ( ("ObjectReplacement" in line) or ("Thumbnails" in line) ):
                         outbytes = outbytes + line + "\n"

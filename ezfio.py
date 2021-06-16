@@ -46,6 +46,45 @@ import tempfile
 import threading
 import time
 import zipfile
+import yaml
+
+def GetDefaultConfig():
+    default_config = {}
+    default_config['global'] = {}
+    default_config['global']['template'] = 'original.ods'
+    default_config['global']['shorttime'] = 120
+    default_config['global']['longtime'] = 1200
+    default_config['global']['block_size_list'] = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
+    default_config['global']['queue_depth_list'] = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    default_config['global']['threads_list'] = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    default_config['global']['queue_x_thread_list'] = [(1, 1), (1, 2), (2, 1), (2, 2), (2, 4), (4, 2), (4, 4), (4, 8), (8, 4), (8, 8), (8, 16), (16, 8), (16, 16), (8, 32), (32, 8), (16, 32), (32, 16), (32, 32), (64, 32)]
+
+    return default_config
+
+
+def CheckTestConfig():
+    global test_config, test_config_file
+    if test_config_file and not test_config_file.isspace():
+        #read file
+        print('Checking test config file %s ... ' % test_config_file, end='')
+
+        with open(test_config_file, 'r') as file_content:
+            test_config = yaml.full_load(file_content)
+            default_config = GetDefaultConfig()
+
+            if not test_config['tests'] or len(test_config['tests']) == 0:
+                print('Failed')
+                print("tests is not configured")
+                sys.exit(1)
+
+            if not test_config['global']:
+                test_config['global'] = default_config['global']
+            else:
+                for item_key in default_config['global'].keys():
+                    if not test_config['global'].get(item_key):
+                        test_config['global'][item_key] = default_config['global'][item_key]
+
+        print('Passed')
 
 
 def AppendFile(text, filename):
@@ -145,11 +184,34 @@ def CheckAIOLimits():
         pass
 
 
+def PdshLikeStringCovert(input_str):
+    content = input_str
+    if '[' in input_str and ']' in input_str and input_str.index('[') < input_str.index(']'):
+        out_list = []
+        left = input_str[0:input_str.index('[')]
+        right = input_str[input_str.index(']')+1:]
+        content = input_str[input_str.index('[')+1:input_str.index(']')]
+        for section in content.split(','):
+            if '-' in section:
+                start = section[:section.index('-')]
+                end = section[section.index('-')+1:]
+                if int(start) < 0 or int(end) <= 0 or int(start) > int(end):
+                    print('wrong format input - %s' % input_str)
+                    sys.exit(1)
+                for i in range(int(start), int(end)+1):
+                    out_list.append('%s%s%s' % (left, i, right))
+            else:
+                out_list.append('%s%s%s' % (left, section, right))
+        content = ','.join(out_list)
+
+    return content
+
+
 def ParseArgs():
     """Parse command line options into globals."""
     global physDrive, physDriveDict, physDriveTxt, utilization, nullio, isFile
     global outputDest, offset, cluster, yes, quickie, verify, fastPrecond
-    global readOnly
+    global readOnly, test_config_file, maxThreads
 
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -163,9 +225,12 @@ Requirements:\n
 * sdparm to identify the NVME device and serial number
 
 WARNING: All data on the target device will be DESTROYED by this test.""")
+    parser.add_argument("--test-config", dest="test_config",
+                        help="Test cases config file.", required=False)
     parser.add_argument("--cluster", dest="cluster", action='store_true',
                         help="Run the test on a cluster (--drive in "+
-                        "host1:/dev/p1,host2:/dev/ps,...)", required=False)
+                        "'host1:/dev/p1,/dev/p2;host2:/dev/ps,...'). "+
+                        "you need to run fio --server on each host first.", required=False)
     parser.add_argument("--verify", dest="verify", action='store_true',
                         help="Have FIO perform data verifications on reads."+
                         " May impact performance", required=False)
@@ -193,8 +258,14 @@ WARNING: All data on the target device will be DESTROYED by this test.""")
                         action='store_true', required=False)
     parser.add_argument("--readonly", dest="readonly", help="Only run read-only tests, don't write to device",
                         action='store_true', required=False)
+    parser.add_argument("--max-threads", dest="maxThreads", type=int, default="0",
+                        help="Max threads for each fio job, "+
+                        "if the devices * thread more than maxThreads, you have to run cluster mode. "+
+                        "You also need to check the env of your fio server with 'ulimit -a', "+
+                        "make sure the 'open files' config is enough.", required=False)
     args = parser.parse_args()
 
+    test_config_file = args.test_config
     physDrive = args.physDrive
     physDriveTxt = physDrive
     utilization = args.utilization
@@ -208,13 +279,21 @@ WARNING: All data on the target device will be DESTROYED by this test.""")
     cluster = args.cluster
     isFile = args.file
     readOnly = args.readonly
+    maxThreads = args.maxThreads
+
+    if maxThreads > 0 and not cluster:
+        print("ERROR:  --max-threads option must be used together with --cluster option.")
+        parser.print_help()
+        sys.exit(1)
 
     # For cluster mode, we add a new physDriveList dict and fake physDrive
     if cluster:
-        nodes = physDrive.split(",")
+        nodes = physDrive.split(";")
         for node in nodes:
-            physDriveDict[node.split(":")[0]] = node.split(":")[1]
-        physDrive = nodes[0].split(":")[1]
+            physDriveDict[node.split(":")[0]] = PdshLikeStringCovert(node.split(":")[1])
+        physDrive = PdshLikeStringCovert(nodes[0].split(":")[1])
+    else:
+        physDrive = PdshLikeStringCovert(physDrive)
 
     if (utilization < 1) or (utilization > 100):
         print("ERROR:  Utilization must be between 1...100")
@@ -281,7 +360,8 @@ def CollectSystemInfo():
             cpuFreqMHz = int(round(float(grep(cpuinfo, r'clock')[0].split(': ')[1][:-3])))
     else:
         model_names = grep(cpuinfo, r'model name')
-        cpu = model_names[0].split(': ')[1].replace('(R)', '').replace('(TM)', '')
+        if model_names and len(model_names) > 0:
+            cpu = model_names[0].split(': ')[1].replace('(R)', '').replace('(TM)', '')
         cpuCores = len(model_names)
         try:
             code, dmidecode, err = Run(['dmidecode', '--type', 'processor'])
@@ -398,7 +478,7 @@ def SetupFiles():
     suffix += socket.gethostname() + "_" + ds
 
     if not outputDest:
-        outputDest = os.getcwd()
+        outputDest = os.getcwd() + '/test_result'
     # The "details" directory contains the raw output of each FIO run
     details = outputDest + "/details_" + suffix
     if os.path.exists(details):
@@ -435,9 +515,12 @@ def SetupFiles():
                timeseriesslatcsv)  # Add IOPS header
 
     # ODS input and output files
-    odssrc = os.path.dirname(os.path.realpath(__file__)) + "/original.ods"
+    template = 'original.ods'
+    if test_config['global'].get('template'):
+        template = test_config['global']['template']
+    odssrc =  "%s/%s" % (os.path.dirname(os.path.realpath(__file__)), template)
     if not os.path.exists(odssrc):
-        print("ERROR: Can't find original ODS spreadsheet '" + odssrc + "'.")
+        print("ERROR: Can't find template ODS spreadsheet '" + odssrc + "'.")
         sys.exit(1)
     odsdest = outputDest + "/ezfio_results_"+suffix+".ods"
     if os.path.exists(odsdest):
@@ -525,6 +608,13 @@ def SequentialConditioning():
         os.unlink(jobfile.name)
 
     if code != 0:
+        if 'Connection refused' in err:
+            sys.stdout.flush()
+            print('');
+            print('');
+            print('=========================================================================================================');
+            print('Connection refused! Please check if you have start the fio with \'fio --server\' and your firewall rules.');
+            print('=========================================================================================================');
         raise FIOError(" ".join(cmdline), code, err, out)
     else:
         return "DONE", "DONE", "DONE"
@@ -596,7 +686,7 @@ def RandomConditioning():
 
 def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
     """Runs the specified test, generates output CSV lines."""
-    global cluster, physDriveDict
+    global cluster, physDriveDict, maxThreads
 
     # Taken from fio_latency2csv.py - needed to convert funky semi-log to normal latencies
     def plat_idx_to_val(idx, FIO_IO_U_PLAT_BITS=6, FIO_IO_U_PLAT_VAL=64):
@@ -671,7 +761,7 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                             ",".join((str(plat_idx_to_val(b, plat_bits, plat_val)),
                                       str(pctile))), outfile)
 
-    def GenerateJobfile(rw, wmix, bs, drive, testcapacity, runtime, threads, iodepth, testoffset):
+    def GenerateJobfile(testfile, rw, wmix, bs, drive, testcapacity, runtime, threads, iodepth, testoffset):
         """Make a jobfile for the specified test parameters"""
         global verify, nullio
         jobfile = tempfile.NamedTemporaryFile(delete=False, mode='w')
@@ -702,11 +792,80 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                 jobfile.write("verify=crc32c\n")
                 jobfile.write("random_generator=lfsr\n")
             jobfile.write("offset=" + str(testoffset) + "G\n")
+
+            if iops_log:
+                jobfile.write("write_iops_log=%s\n" % testfile)
+                jobfile.write("write_lat_log=%s\n" % testfile)
+                jobfile.write("log_avg_msec=1000\n")
+                jobfile.write("log_unix_epoch=0\n")
+
         jobfile.close()
         return jobfile
 
+    def CombineAllClientStats(stats):
+        client = {}
+        client['jobname'] = "All clients"
+
+        client['sys_cpu'] = 0
+        client['usr_cpu'] = 0
+
+        client['read'] = {}
+        client['read']['io_bytes'] = 0
+        client['read']['io_kbytes'] = 0
+        client['read']['bw_bytes'] = 0
+        client['read']['bw'] = 0
+        client['read']['iops'] = 0
+        client['read']['total_ios'] = 0
+        client['read']['drop_ios'] = 0
+        client['read']['lat_ns'] = {}
+        client['read']['lat_ns']['mean'] = 0
+
+        client['write'] = {}
+        client['write']['iops'] = 0
+        client['write']['bw'] = 0
+        client['write']['total_ios'] = 0
+        client['write']['lat_ns'] = {}
+        client['write']['lat_ns']['mean'] = 0
+
+        if len(stats) == 0:
+            return client       
+
+        item_count = 0
+        for item in stats:
+            item_count += 1
+            client['sys_cpu'] += float(item['sys_cpu'])
+            client['usr_cpu'] += float(item['usr_cpu'])
+
+            client['read']['bw'] += float(item['read']['bw'])
+            client['read']['iops'] += float(item['read']['iops'])
+            client['read']['total_ios'] += float(item['read']['total_ios'])
+            client['read']['lat_ns']['mean'] += float(item['read']['lat_ns']['mean'])
+
+            client['write']['iops'] += float(item['write']['iops'])
+            client['write']['bw'] += float(item['write']['bw'])
+            client['write']['total_ios'] += float(item['write']['total_ios'])
+            client['write']['lat_ns']['mean'] += float(item['write']['lat_ns']['mean'])
+ 
+        client['sys_cpu'] = client['sys_cpu'] / item_count
+        client['usr_cpu'] = client['usr_cpu'] / item_count
+        client['read']['lat_ns']['mean'] = item['read']['lat_ns']['mean'] / item_count
+        client['write']['lat_ns']['mean'] = item['write']['lat_ns']['mean'] / item_count
+
+        return client
+
+
     def CombineThreadOutputs(suffix, outcsv, lat):
         """Merge all FIO iops/lat logs across all servers"""
+        disble_shrink = False
+        if disble_shrink:
+            shrink_ratio = 1
+            item_count = runtime + extra_runtime
+        else:
+            shrink_ratio = CalculateShrinkRatio(runtime + extra_runtime, threshold)
+            if shrink_ratio == 1:
+                item_count = runtime + extra_runtime
+            else:
+                item_count = threshold
         # The lists may be called "iops" but the same works for clat/slat
         iops = [0] * (runtime + extra_runtime)
         # For latencies, need to keep the _w and _r separate
@@ -714,6 +873,7 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
         host_iops = OrderedDict()
         host_iops_w = OrderedDict()
         filecnt = 0
+
         if not cluster:
             pdd = OrderedDict()
             pdd['localhost'] = 1 # Just the single host, faked here
@@ -739,7 +899,10 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
                 riops = 0
                 wiops = 0
                 nexttime = 0
-                for x in range(0, runtime + extra_runtime):
+                x = 0
+                for time_item in range(0, runtime + extra_runtime):
+                    if time_item >= ((x + 1) * shrink_ratio):
+                        x += 1
                     if not lat:
                         iops[x] = iops[x] + riops + wiops
                         host_iops[host][x] = host_iops[host][x] + riops + wiops
@@ -759,22 +922,22 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
 
         # Generate the combined CSV
         with open(outcsv, 'a') as f:
-            for cnt in range(int(extra_runtime/2), runtime + extra_runtime):
+            for cnt in range(0, item_count):
                 if filecnt > 0 and lat:
-                    line = str(float(iops[cnt])/float(filecnt))
-                    line = line + ',' + str(float(iops_w[cnt])/float(filecnt))
+                    line = str(float(iops[cnt])/float(filecnt)/float(shrink_ratio))
+                    line = line + ',' + str(float(iops_w[cnt])/float(filecnt)/float(shrink_ratio))
                 else:
-                    line = str(iops[cnt])
+                    line = str(float(iops[cnt])/float(shrink_ratio))
                 if len(pdd.keys()) > 1:
                     for host in pdd.keys():
                         if filecnt > 0 and lat:
                             line = line + ',' + \
-                                str(float(host_iops[host][cnt])/float(filecnt))
+                                str(float(host_iops[host][cnt])/float(filecnt)/float(shrink_ratio))
                             line = line + ',' + \
                                 str(float(host_iops_w[host]
-                                          [cnt])/float(filecnt))
+                                          [cnt])/float(filecnt)/float(shrink_ratio))
                         else:
-                            line = line + "," + str(host_iops[host][cnt])
+                            line = line + "," + str(float(host_iops[host][cnt])/float(shrink_ratio))
                 f.write(line + "\n")
 
     # Output file names
@@ -792,34 +955,86 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
 
     cmdline = [fio]
     if not cluster:
-        jobfile = GenerateJobfile(rw, wmix, bs, physDrive, testcapacity,
+        jobfile = GenerateJobfile(testfile, rw, wmix, bs, physDrive, testcapacity,
                                   runtime + extra_runtime, threads, iodepth, testoffset)
         cmdline = cmdline + [jobfile.name]
         AppendFile("[JOBFILE]", testfile)
         with open(jobfile.name, 'r') as of:
             txt = of.read()
             AppendFile(txt, testfile)
-        if iops_log:
-            AppendFile("write_iops_log=" + testfile, jobfile.name)
-            AppendFile("write_lat_log=" + testfile, jobfile.name)
-            AppendFile("log_avg_msec=1000", jobfile.name)
-            AppendFile("log_unix_epoch=0", jobfile.name)
+        #if iops_log:
+        #    AppendFile("write_iops_log=" + testfile, jobfile.name)
+        #    AppendFile("write_lat_log=" + testfile, jobfile.name)
+        #    AppendFile("log_avg_msec=1000", jobfile.name)
+        #    AppendFile("log_unix_epoch=0", jobfile.name)
     else:
         jobfile = []
         for host in physDriveDict.keys():
-            newjob = GenerateJobfile(rw, wmix, bs, physDriveDict[host], testcapacity,
-                                     runtime + extra_runtime, threads, iodepth, testoffset)
-            cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
-            AppendFile('[JOBFILE-' + str(host) + "]", testfile)
-            with open(newjob.name, 'r') as of:
-                txt = of.read()
-                AppendFile(txt, testfile)
-            jobfile = jobfile + [newjob]
-            if iops_log:
-                AppendFile("write_iops_log=" + testfile, newjob.name)
-                AppendFile("write_lat_log=" + testfile, newjob.name)
-                AppendFile("log_avg_msec=1000", newjob.name)
-                AppendFile("log_unix_epoch=0", newjob.name)
+            drives = physDriveDict[host]
+            drive_list = drives.split(",")
+            if maxThreads > 0 and len(drive_list) * threads > maxThreads:
+                th_count = 0
+                proc_count = 0
+                device_list = []
+                for i in drive_list:
+                    th_count += threads
+                    if th_count <= maxThreads:
+                        device_list.append(i)
+                    else:
+                        th_count = 0
+                        devices  = ','.join(device_list)
+                        device_list = []
+                        newjob = GenerateJobfile(testfile, rw, wmix, bs, devices, testcapacity,
+                                                runtime + extra_runtime, threads, iodepth, testoffset)
+                        cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
+                        AppendFile('[JOBFILE-' + str(host) + "-" + str(proc_count) + "]", testfile)
+                        with open(newjob.name, 'r') as of:
+                            txt = of.read()
+                            AppendFile(txt, testfile)
+                        jobfile = jobfile + [newjob]
+                        #if iops_log:
+                        #    AppendFile("write_iops_log=" + testfile, newjob.name)
+                        #    AppendFile("write_lat_log=" + testfile, newjob.name)
+                        #    AppendFile("log_avg_msec=1000", newjob.name)
+                        #    AppendFile("log_unix_epoch=0", newjob.name)
+                        proc_count += 1
+                        device_list.append(i)
+                
+                if len(device_list) > 0:
+                    devices  = ','.join(device_list)
+                    newjob = GenerateJobfile(testfile, rw, wmix, bs, devices, testcapacity,
+                                            runtime + extra_runtime, threads, iodepth, testoffset)
+                    cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
+                    AppendFile('[JOBFILE-' + str(host) + "-" + str(proc_count) + "]", testfile)
+                    with open(newjob.name, 'r') as of:
+                        txt = of.read()
+                        AppendFile(txt, testfile)
+                    jobfile = jobfile + [newjob]
+                    #if iops_log:
+                    #    AppendFile("write_iops_log=" + testfile, newjob.name)
+                    #    AppendFile("write_lat_log=" + testfile, newjob.name)
+                    #    AppendFile("log_avg_msec=1000", newjob.name)
+                    #    AppendFile("log_unix_epoch=0", newjob.name)
+            else:
+                newjob = GenerateJobfile(testfile, rw, wmix, bs, physDriveDict[host], testcapacity,
+                                        runtime + extra_runtime, threads, iodepth, testoffset)
+                cmdline = cmdline + ['--client=' + str(host), str(newjob.name)]
+                AppendFile('[JOBFILE-' + str(host) + "]", testfile)
+                with open(newjob.name, 'r') as of:
+                    txt = of.read()
+                    AppendFile(txt, testfile)
+                jobfile = jobfile + [newjob]
+                #if iops_log:
+                #    AppendFile("write_iops_log=" + testfile, newjob.name)
+                #    AppendFile("write_lat_log=" + testfile, newjob.name)
+                #    AppendFile("log_avg_msec=1000", newjob.name)
+                #    AppendFile("log_unix_epoch=0", newjob.name)
+
+    def CalculateShrinkRatio(runtime, threshold):
+        shrink_ratio = 1
+        if runtime >= 2 * threshold:
+            shrink_ratio = int(runtime / threshold)
+        return shrink_ratio
 
     cmdline = cmdline + ['--output-format=' + str(fioOutputFormat)]
 
@@ -862,6 +1077,7 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
         raise FIOError(" ".join(cmdline), code, err, out)
 
     if iops_log:
+        threshold = 3200
         CombineThreadOutputs('_iops', timeseriescsv, False)
         CombineThreadOutputs('_clat', timeseriesclatcsv, True)
         CombineThreadOutputs('_slat', timeseriesslatcsv, True)
@@ -872,21 +1088,29 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
     wlat = 0
     syscpu = 0
     usrcpu = 0
+    client = None
     if not skiptest:
         # Chomp anything before the json.
         for i in range(0, len(out)):
             if out[i] == '{':
+                if len(out[:i].strip()) > 0:
+                    print(out[:i].strip())
                 out = out[i:]
                 break
+
         j = json.loads(out)
 
-        if cluster and len(physDriveDict.keys()) == 1:
-            client = j['client_stats'][0]
-        elif cluster:
+        if cluster:
             for res in j['client_stats']:
                 if res['jobname'] == "All clients":
                     client = res
                     break
+
+            if not client:
+                if len(j['client_stats']) == 1:
+                    client = j['client_stats'][0]
+                else:
+                    client = CombineAllClientStats(j['client_stats'])
         else:
             client = j['jobs'][0]
 
@@ -925,7 +1149,78 @@ def RunTest(iops_log, seqrand, wmix, bs, threads, iodepth, runtime):
     return iops, mbps, lat
 
 
-def DefineTests():
+def AddTest(name, seqrand, writepct, blocksize, threads, qdperthread,
+                iops_log, runtime, desc, cmdline):
+    """Bare usage add a test to the list to execute"""
+    global oc
+
+    if threads != "":
+        qd = int(threads) * int(qdperthread)
+    else:
+        qd = 0
+    dat = {}
+    dat['name'] = name
+    dat['seqrand'] = seqrand
+    dat['wmix'] = writepct
+    dat['bs'] = blocksize
+    dat['qd'] = qd
+    dat['qdperthread'] = qdperthread
+    dat['threads'] = threads
+    dat['bw'] = ''
+    dat['iops'] = ''
+    dat['lat'] = ''
+    dat['desc'] = desc
+    dat['iops_log'] = iops_log
+    dat['runtime'] = runtime
+    dat['cmdline'] = cmdline
+    oc.append(dat)
+
+
+def DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+              iops_log, runtime):
+    """Add an individual run to the list of tests to execute"""
+    AddTest(testname, seqrand, wmix, bs, threads, iodepth, iops_log,
+            runtime, desc, lambda o: {RunTest(o['iops_log'],
+                                              o['seqrand'], o['wmix'],
+                                              o['bs'], o['threads'],
+                                              o['qdperthread'],
+                                              o['runtime'])})
+
+
+def AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth,
+                  iops_log, runtime):
+    """Add a sequence of tests varying the block size"""
+    AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+            lambda o: {AppendFile(o['name'], testcsv)})
+    for bs in bslist:
+        desc = testname + ", BS=" + str(bs)
+        DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                  iops_log, runtime)
+
+
+def AddTestQDShmoo(testname, qdlist, seqrand, wmix, bs, threads, 
+                    iops_log, runtime):
+    """Add a sequence of tests varying the queue depth"""
+    AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+            lambda o: {AppendFile(o['name'], testcsv)})
+    for iodepth in qdlist:
+        desc = testname + ", QD=" + str(iodepth)
+        DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                  iops_log, runtime)
+
+
+def AddTestThreadsShmoo(testname, threadslist, seqrand, wmix, bs, iodepth,
+                  iops_log, runtime):
+    """Add a sequence of tests varying the number of threads"""
+    AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+            lambda o: {AppendFile(o['name'], testcsv)})
+    for threads in threadslist:
+        desc = testname + ", Threads=" + str(threads)
+        DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                  iops_log, runtime)
+
+
+def DefineDefaultTests():
     """Generate the work list for the main worker into OC."""
     global oc, quickie, fastPrecond
     # What we're shmoo-ing across
@@ -938,67 +1233,6 @@ def DefineTests():
     if quickie:
         shorttime = int(shorttime / 10)
         longtime = int(longtime / 10)
-
-    def AddTest(name, seqrand, writepct, blocksize, threads, qdperthread,
-                iops_log, runtime, desc, cmdline):
-        """Bare usage add a test to the list to execute"""
-        if threads != "":
-            qd = int(threads) * int(qdperthread)
-        else:
-            qd = 0
-        dat = {}
-        dat['name'] = name
-        dat['seqrand'] = seqrand
-        dat['wmix'] = writepct
-        dat['bs'] = blocksize
-        dat['qd'] = qd
-        dat['qdperthread'] = qdperthread
-        dat['threads'] = threads
-        dat['bw'] = ''
-        dat['iops'] = ''
-        dat['lat'] = ''
-        dat['desc'] = desc
-        dat['iops_log'] = iops_log
-        dat['runtime'] = runtime
-        dat['cmdline'] = cmdline
-        oc.append(dat)
-
-    def DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
-                  iops_log, runtime):
-        """Add an individual run to the list of tests to execute"""
-        AddTest(testname, seqrand, wmix, bs, threads, iodepth, iops_log,
-                runtime, desc, lambda o: {RunTest(o['iops_log'],
-                                                  o['seqrand'], o['wmix'],
-                                                  o['bs'], o['threads'],
-                                                  o['qdperthread'],
-                                                  o['runtime'])})
-
-    def AddTestBSShmoo():
-        """Add a sequence of tests varying the block size"""
-        AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
-                lambda o: {AppendFile(o['name'], testcsv)})
-        for bs in bslist:
-            desc = testname + ", BS=" + str(bs)
-            DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
-                      iops_log, runtime)
-
-    def AddTestQDShmoo():
-        """Add a sequence of tests varying the queue depth"""
-        AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
-                lambda o: {AppendFile(o['name'], testcsv)})
-        for iodepth in qdlist:
-            desc = testname + ", QD=" + str(iodepth)
-            DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
-                      iops_log, runtime)
-
-    def AddTestThreadsShmoo():
-        """Add a sequence of tests varying the number of threads"""
-        AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
-                lambda o: {AppendFile(o['name'], testcsv)})
-        for threads in threadslist:
-            desc = testname + ", Threads=" + str(threads)
-            DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
-                      iops_log, runtime)
 
     AddTest('Sequential Preconditioning', 'Preparation', '', '', '', '', '',
             '', '', lambda o: {})  # Only for display on-screen
@@ -1017,7 +1251,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 256
-    AddTestBSShmoo()
+    AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth, iops_log, runtime)
 
     testname = "Sustained Multi-Threaded Random Read Tests by Block Size"
     seqrand = "Rand"
@@ -1026,7 +1260,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 16
-    AddTestBSShmoo()
+    AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth, iops_log, runtime)
 
     testname = "Sequential Write Tests with Queue Depth=1 by Block Size"
     seqrand = "Seq"
@@ -1035,7 +1269,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 1
-    AddTestBSShmoo()
+    AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth, iops_log, runtime)
 
     if not fastPrecond:
         AddTest('Random Preconditioning', 'Preparation', '', '', '', '', '', '',
@@ -1054,7 +1288,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 1
-    AddTestThreadsShmoo()
+    AddTestThreadsShmoo(testname, threadslist, seqrand, wmix, bs, iodepth, iops_log, runtime)
 
     testname = "Sustained 4KB Random mixed 30% Write Tests by Threads"
     seqrand = "Rand"
@@ -1063,7 +1297,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 1
-    AddTestThreadsShmoo()
+    AddTestThreadsShmoo(testname, threadslist, seqrand, wmix, bs, iodepth, iops_log, runtime)
 
     testname = "Sustained Perf Stability Test - 4KB Random 30% Write"
     AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
@@ -1085,7 +1319,7 @@ def DefineTests():
     runtime = shorttime
     iops_log = False
     iodepth = 1
-    AddTestThreadsShmoo()
+    AddTestThreadsShmoo(testname, threadslist, seqrand, wmix, bs, iodepth, iops_log, runtime)
 
     testname = "Sustained Multi-Threaded Random Write Tests by Block Size"
     seqrand = "Rand"
@@ -1094,7 +1328,117 @@ def DefineTests():
     iops_log = False
     iodepth = 16
     threads = 16
-    AddTestBSShmoo()
+    AddTestBSShmoo(testname, bslist, seqrand, wmix, threads, iodepth, iops_log, runtime)
+
+
+def DefineConfiguredTests():
+    """Generate the work list for the main worker into OC."""
+    global oc, quickie, fastPrecond
+    # What we're shmoo-ing across
+    bslist = test_config['global']['block_size_list']
+    qdlist = test_config['global']['queue_depth_list']
+    threadslist = test_config['global']['threads_list']
+    queue_x_thread_list = test_config['global']['queue_x_thread_list']
+
+    shorttime = test_config['global']['shorttime']  # Runtime of point tests
+    longtime = test_config['global']['longtime']  # Runtime of long-running tests
+    if quickie:
+        shorttime = int(shorttime / 10)
+        longtime = int(longtime / 10)
+
+
+    for test in test_config.get('tests'):
+        if test.get('condition'):
+            if not eval(test.get('condition')):
+                print("Test is skipped as conditon [%s] is not true" % test.get('condition'))
+                continue
+
+        testname = test.get('test')
+        desc = test.get('desc', '')
+        seqrand = test.get('rand')
+        wmix = test.get('writepct')
+        bs = test.get('blocksize')
+        threads = test.get('threads', '')
+        if test.get('runtime'):
+            if test.get('runtime') == 'shorttime':
+                runtime = shorttime
+            elif test.get('runtime') == 'longtime':
+                runtime = longtime
+            else:
+                runtime = int(test.get('runtime'))
+        else:
+            runtime = shorttime
+
+        iops_log = test.get('iops_log')
+        iodepth = test.get('queue_depth')
+        cmd_line = test.get('cmd_line')
+        cmd_lambda = None
+
+        if cmd_line:
+            if cmd_line == 'SequentialConditioning':
+                cmd_lambda = lambda o: {SequentialConditioning()}
+            elif cmd_line == 'RandomConditioning':
+                cmd_lambda = lambda o: {RandomConditioning()}
+            elif cmd_line == 'AppendFile':
+                cmd_lambda = lambda o: {AppendFile(o['name'], testcsv)}
+            elif cmd_line == 'RunTest':
+                cmd_lambda = lambda o: {RunTest(o['iops_log'],
+                                              o['seqrand'], o['wmix'],
+                                              o['bs'], o['threads'],
+                                              o['qdperthread'],
+                                              o['runtime'])}
+            else:
+                print('test %s cmd_line %s is not supported.' % testname, cmd_line)
+                sys.exit(1)
+        else:
+            cmd_lambda = lambda o: {}
+
+        if not bs or bs == 0 or bs == '':
+            AddTest(testname, seqrand, '', '', '', '', '',
+                '', '', cmd_lambda)
+            continue
+
+        if threads == 'threads_list':
+            AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+                lambda o: {AppendFile(o['name'], testcsv)})
+            for threads in threadslist:
+                desc = testname + ", Threads=" + str(threads)
+                DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                        iops_log, runtime)
+        elif threads == 'queue_x_thread_list':
+            AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+                lambda o: {AppendFile(o['name'], testcsv)})
+            for item in queue_x_thread_list:
+                queuedepth, threads = eval(item)
+                desc = "%s, QD=%d Threads=%d" % (testname, queuedepth, threads)
+                DoAddTest(testname, seqrand, wmix, bs, threads, queuedepth, desc,
+                        iops_log, runtime)
+        elif bs == 'block_size_list':
+            AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+                lambda o: {AppendFile(o['name'], testcsv)})
+            for bs in bslist:
+                desc = testname + ", BS=" + str(bs)
+                DoAddTest(testname, seqrand, wmix, bs, threads, iodepth, desc,
+                  iops_log, runtime)
+        elif iodepth == 'queue_depth_list':
+            AddTest(testname, 'Preparation', '', '', '', '', '', '', '',
+                lambda o: {AppendFile(o['name'], testcsv)})
+            for queue_depth in qdlist:
+                desc = testname + ", QueueDepth=" + str(queue_depth)
+                DoAddTest(testname, seqrand, wmix, bs, threads, queue_depth, desc,
+                  iops_log, runtime)
+        else:
+            AddTest(testname, seqrand, wmix, bs, threads,
+                iodepth, iops_log, runtime, desc, cmd_lambda)
+
+
+def DefineTests():
+    global test_config
+
+    if not test_config:
+        DefineDefaultTests()
+    else:
+        DefineConfiguredTests()
 
 
 def RunAllTests():
@@ -1125,7 +1469,9 @@ def RunAllTests():
             print("\nFIO Error!\n" + e.cmdline + "\nSTDOUT:\n" + e.stdout)
             print("STDERR:\n" + e.stderr)
             raise
-        except:
+        except Exception as e:
+            print("\nUnexpected Error!\n" + "\nSTDOUT:\n" + e.stdout)
+            print("STDERR:\n" + e.stderr)
             print("\nUnexpected error while running FIO job.")
             raise
 
@@ -1394,6 +1740,8 @@ AAAAAAAAAAAAAAAAAAAAAG1pbWV0eXBlUEsFBgAAAAABAAEANgAAAFQAAAAAAA==
 fio = ""          # FIO executable
 fioVerString = ""  # FIO self-reported version
 fioOutputFormat = "json"  # Can we make exceedance charts using JSON+ output?
+test_config_file = ""
+test_config = None
 cluster = False   # Running multiple jobs in a cluster using fio --server
 physDrive = ""    # Device path to test
 physDriveTxt = ""  # Unadulterated drive line
@@ -1434,16 +1782,14 @@ odssrc = ""  # Original ODS spreadsheet file
 odsdest = ""  # Generated results ODS spreadsheet file
 
 oc = []  # The list of tests to run
-aioNeeded = 4096  # Minimum AIO kernel setting to run all tests
-
-# These globals are used to return the output results of the test thread
-# Required because it's difficult to pass back values from a threading.().
+aioNeeded = 4096  # Minimum AIO kernel setting to run all teststests_config().
 ret_iops = 0  # Last test IOPS
 ret_mbps = 0  # Last test MBPs
 ret_lat = 0  # Last test in microseconds
 
 if __name__ == "__main__":
     ParseArgs()
+    CheckTestConfig()
     CheckAdmin()
     fio = FindFIO()
     CheckFIOVersion()

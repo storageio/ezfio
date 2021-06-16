@@ -1,0 +1,177 @@
+#    bslist = (512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072)
+#    qdlist = (1, 2, 4, 8, 16, 32, 64, 128, 256)
+#    threadslist = (1, 2, 4, 8, 16, 32, 64, 128, 256)
+#    shorttime = 120  # Runtime of point tests
+#    longtime = 1200  # Runtime of long-running tests
+
+global:
+  shorttime: 120
+  longtime: 1200
+  block_size_list:
+    - 512
+    - 1024
+    - 2048
+    - 4096
+    - 8192
+    - 16384
+    - 32768
+    - 65536
+    - 131072
+    - 262144
+    - 524288
+    - 1048576
+  queue_depth_list:
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32
+    - 64
+    - 128
+    - 256
+  threads_list:
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32
+    - 64
+    - 128
+    - 256
+  queue_x_thread_list:
+    - (1, 1)
+    - (1, 2)
+    - (2, 1)
+    - (2, 2)
+    - (2, 4)
+    - (4, 2)
+    - (4, 4)
+    - (4, 8)
+    - (8, 4)
+    - (8, 8)
+    - (8, 16)
+    - (16, 8)
+    - (16, 16)
+    - (8, 32)
+    - (32, 8)
+    - (16, 32)
+    - (32, 16)
+    - (32, 32)
+    - (64, 32)
+tests:
+  - test: Sequential Preconditioning
+    rand: Preparation
+  - test: Sequential Preconditioning
+    desc: Sequential Preconditioning Pass 1
+    rand: Seq Pass 1
+    writepct: 100
+    blocksize: 131072
+    threads: 1
+    queue_depth: 256
+    iops_log: false
+    cmd_line: SequentialConditioning
+  - test: Sequential Preconditioning
+    desc: Sequential Preconditioning Pass 2
+    condition: not fastPrecond
+    rand: Seq Pass 2
+    writepct: 100
+    blocksize: 131072
+    threads: 1
+    queue_depth: 256
+    iops_log: false
+    cmd_line: SequentialConditioning
+  # sequential tests
+  - test: Sustained Multi-Threaded Sequential Read Tests by Block Size
+    rand: Seq
+    writepct: 0
+    blocksize: block_size_list
+    threads: 1
+    runtime: shorttime
+    queue_depth: 256
+    iops_log: false
+  - test: Sustained Multi-Threaded Random Read Tests by Block Size
+    rand: Rand
+    writepct: 0
+    blocksize: block_size_list
+    threads: 16
+    runtime: shorttime
+    queue_depth: 16
+    iops_log: false
+  - test: Sequential Write Tests with Queue Depth=1 by Block Size
+    rand: Seq
+    writepct: 100
+    blocksize: block_size_list
+    threads: 1
+    runtime: shorttime
+    queue_depth: 1
+    iops_log: false
+  # random tests
+  - test: Random Preconditioning
+    condition: not fastPrecond
+    rand: Preparation
+  - test: Random Preconditioning
+    desc: Random Preconditioning Pass 1
+    condition: not fastPrecond
+    rand: Rand Pass 1
+    writepct: 100
+    blocksize: 4096
+    threads: 1
+    queue_depth: 256
+    iops_log: false
+    cmd_line: RandomConditioning
+  - test: Random Preconditioning
+    desc: Random Preconditioning Pass 2
+    condition: not fastPrecond
+    rand: Rand Pass 2
+    writepct: 100
+    blocksize: 4096
+    threads: 1
+    queue_depth: 256
+    iops_log: false
+    cmd_line: RandomConditioning
+  - test: Sustained 4KB Random Read Tests by Number of Threads
+    rand: Rand
+    writepct: 0
+    blocksize: 4096
+    threads: threads_list
+    runtime: shorttime
+    queue_depth: 1
+    iops_log: false
+  - test: Sustained 4KB Random mixed 30% Write Tests by Threads
+    rand: Rand
+    writepct: 30
+    blocksize: 4096
+    threads: threads_list
+    runtime: shorttime
+    queue_depth: 1
+    iops_log: false
+  - test: Sustained Perf Stability Test - 4KB Random 30% Write
+    rand: Preparation
+    cmd_line: AppendFile
+  - test: Sustained Perf Stability Test - 4KB Random 30% Write
+    rand: Rand
+    writepct: 30
+    blocksize: 4096
+    threads: 256
+    runtime: longtime
+    queue_depth: 1
+    iops_log: true
+    cmd_line: RunTest
+  - test: Sustained 4KB Random Write Tests by Number of Threads
+    rand: Rand
+    writepct: 100
+    blocksize: 4096
+    threads: threads_list
+    runtime: shorttime
+    queue_depth: 1
+    iops_log: false
+  - test: Sustained 4KB Random Write Tests by Number of Threads
+    rand: Rand
+    writepct: 100
+    blocksize: block_size_list
+    threads: 16
+    runtime: shorttime
+    queue_depth: 16
+    iops_log: false
