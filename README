@@ -14,6 +14,7 @@ Improvements to ezFIO:
 Bug Fixes:
 1. 解决多客户端测试只能使用1块盘的问题
 2. 解决多客户端测试，FIO输出有的版本不包含All clients问题
+3. 解决多客户端测试多块盘时IOPS的统计问题
 
 Known Issue:
 1. 线程数多了之后，如256线程数+队列深度8，统计的IOPS Timeseries数据不对
