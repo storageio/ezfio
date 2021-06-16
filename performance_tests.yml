@@ -1,6 +1,6 @@
 global:
   template: performance_template.ods
-  shorttime: 120
+  shorttime: 300
   longtime: 1200
   queue_x_thread_list:
     - (1, 1)

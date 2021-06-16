@@ -1,8 +1,8 @@
 global:
   template: stability_template.ods
   shorttime: 120
-  #longtime: 3600 # 1 Hours
-  longtime: 86400 # 24 Hours
+  longtime: 3600 # 1 Hours
+  #longtime: 86400 # 24 Hours
 tests:
   - test: Sequential Preconditioning
     rand: Preparation
